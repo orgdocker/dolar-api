@@ -72,7 +72,7 @@ curl http://localhost:8081/api/historico-dolar
 Dashboard en HTML + Tailwind + JavaScript (Chart.js) en `app/static/dashboard.html`.
 
 - Servido por la propia API: `http://<IP-PUBLICA>:8081/dashboard` (mismo origen, sin problemas de CORS).
-- Abierto como archivo local: consume `http://52.3.230.46:8081/api/historico-dolar` (la API envía `Access-Control-Allow-Origin`; se puede restringir con la variable `CORS_ORIGIN`).
+- Abierto como archivo local: consume `http://184.198.219.230/:8081/api/historico-dolar` (la API envía `Access-Control-Allow-Origin`; se puede restringir con la variable `CORS_ORIGIN`).
 
 ## 8. Despliegue en AWS EC2 (capa gratuita)
 
