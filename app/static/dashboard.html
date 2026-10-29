@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dólar por Presidencia</title>
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <script>tailwind.config = { darkMode: 'class' }</script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --surface: #f6f6f4; --card: #fcfcfb; --border: #e4e3de;
+      --text-1: #0b0b0b; --text-2: #52514e; --text-3: #8a8983;
+      --series-1: #2a78d6; --series-1-soft: #86b6ef; --grid: #ecebe6;
+    }
+    :root.dark {
+      --surface: #111110; --card: #1a1a19; --border: #2c2c2a;
+      --text-1: #f0efec; --text-2: #c3c2b7; --text-3: #8e8d85;
+      --series-1: #3987e5; --series-1-soft: #1c5cab; --grid: #262624;
+    }
+    body { background: var(--surface); color: var(--text-1); font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; }
+    .t2 { color: var(--text-2); } .t3 { color: var(--text-3); }
+    .skeleton { background: linear-gradient(90deg, var(--border) 25%, var(--grid) 50%, var(--border) 75%); background-size: 200% 100%; animation: sh 1.2s infinite; border-radius: 8px; }
+    @keyframes sh { to { background-position: -200% 0; } }
+    th, td { white-space: nowrap; }
+  </style>
+</head>
+<body class="min-h-screen">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 py-8">
+    <!-- Header -->
+    <header class="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-8">
+      <div>
+        <p class="text-xs font-semibold uppercase tracking-widest t3">Colombia · TRM COP/USD · 1994–2026</p>
+        <h1 class="text-2xl sm:text-3xl font-semibold mt-1">El dólar en cada gobierno</h1>
+        <p class="t2 text-sm mt-1">Precio mínimo y máximo del dólar durante los últimos 8 mandatos presidenciales.</p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <input id="apiUrl" class="card px-3 py-2 text-sm w-full sm:w-80 outline-none focus:ring-2 focus:ring-blue-500" aria-label="URL de la API">
+        <button id="reload" class="px-4 py-2 text-sm font-medium rounded-xl text-white" style="background:var(--series-1)">Actualizar</button>
+        <button id="theme" class="card px-3 py-2 text-sm" aria-label="Cambiar tema">Tema</button>
+      </div>
+    </header>
+
+    <!-- Error -->
+    <div id="error" class="hidden card p-4 mb-6 border-red-400 text-sm"></div>
+
+    <!-- KPIs -->
+    <section id="kpis" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div class="card p-5 h-28 skeleton"></div><div class="card p-5 h-28 skeleton"></div>
+      <div class="card p-5 h-28 skeleton"></div><div class="card p-5 h-28 skeleton"></div>
+    </section>
+
+    <!-- Charts -->
+    <section class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+      <div class="card p-5 lg:col-span-2">
+        <h2 class="font-semibold">Rango del dólar por mandato</h2>
+        <p class="t3 text-xs mb-4">Cada barra va del precio mínimo al máximo (COP por USD)</p>
+        <div class="relative h-80"><canvas id="rangeChart" role="img" aria-label="Rango mínimo a máximo del dólar por presidente"></canvas></div>
+      </div>
+      <div class="card p-5">
+        <h2 class="font-semibold">Volatilidad</h2>
+        <p class="t3 text-xs mb-4">Variación % entre mínimo y máximo</p>
+        <div class="relative h-80"><canvas id="varChart" role="img" aria-label="Variación porcentual por presidente"></canvas></div>
+      </div>
+    </section>
+
+    <!-- Table -->
+    <section class="card p-5">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="font-semibold">Detalle por período</h2>
+        <span id="fuente" class="text-xs t3"></span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="t3 text-xs uppercase text-left">
+            <tr><th class="py-2 pr-4">Presidente</th><th class="py-2 pr-4">Período</th>
+              <th class="py-2 pr-4 text-right">Mínimo</th><th class="py-2 pr-4 text-right">Máximo</th>
+              <th class="py-2 text-right">Variación</th></tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="t3 text-xs mt-6">Fuente: API Histórico Dólar Colombia · <span id="updated"></span></footer>
+  </div>
+
+<script>
+const DEFAULT_REMOTE = 'http://184.198.219.230:8081/api/historico-dolar';
+// Si el dashboard lo sirve la propia API (/dashboard), usa la ruta relativa (sin CORS)
+const DEFAULT_URL = location.protocol.startsWith('http') && location.pathname.startsWith('/dashboard')
+  ? '/api/historico-dolar' : DEFAULT_REMOTE;
+
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => '$' + n.toLocaleString('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+const SURNAMES = ['Samper','Pastrana','Uribe','Santos','Duque','Petro','De la Espriella'];
+const short = (name) => {
+  const sn = SURNAMES.find(x => name.includes(x)) || name.split(' ')[0];
+  const term = (name.match(/\((\d)/) || [])[1];
+  return term ? `${sn} ${term === '1' ? 'I' : 'II'}` : sn;
+};
+const pct = (n) => n.toLocaleString('es-CO', { minimumFractionDigits: 1, maximumFractionDigits: 2 }) + '%';
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+let charts = [], lastData = null;
+
+// Tema
+try { if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark'); } catch (e) {}
+$('theme').onclick = () => {
+  const dark = document.documentElement.classList.toggle('dark');
+  try { localStorage.setItem('theme', dark ? 'dark' : 'light'); } catch (e) {}
+  if (lastData) renderCharts(lastData.periodos);
+};
+
+$('apiUrl').value = DEFAULT_URL;
+$('reload').onclick = load;
+$('apiUrl').addEventListener('keydown', (e) => e.key === 'Enter' && load());
+
+async function load() {
+  $('error').classList.add('hidden');
+  try {
+    const res = await fetch($('apiUrl').value, { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    lastData = await res.json();
+    render(lastData);
+  } catch (err) {
+    $('error').innerHTML = `<b>No se pudo cargar la API.</b> ${err.message}.
+      <span class="t2">Verifica que la instancia EC2 esté encendida y el puerto 8081 abierto. Si abriste este archivo localmente,
+      la API debe enviar el encabezado CORS (versión actualizada) o abre <code>http://&lt;IP&gt;:8081/dashboard</code>.</span>`;
+    $('error').classList.remove('hidden');
+  }
+}
+
+function render(data) {
+  const p = data.periodos;
+  const maxP = p.reduce((a, b) => b.dolar_max_cop > a.dolar_max_cop ? b : a);
+  const minP = p.reduce((a, b) => b.dolar_min_cop < a.dolar_min_cop ? b : a);
+  const volP = p.reduce((a, b) => b.variacion_pct > a.variacion_pct ? b : a);
+  const last = p[p.length - 1];
+  const kpi = (label, value, sub) => `<div class="card p-5"><p class="text-xs t3 uppercase tracking-wide">${label}</p>
+    <p class="text-2xl font-semibold mt-2">${value}</p><p class="text-xs t2 mt-1">${sub}</p></div>`;
+  $('kpis').innerHTML =
+    kpi('Máximo histórico', fmt(maxP.dolar_max_cop), `${maxP.presidente} · ${maxP.anios_gestion}`) +
+    kpi('Mínimo histórico', fmt(minP.dolar_min_cop), `${minP.presidente} · ${minP.anios_gestion}`) +
+    kpi('Mayor volatilidad', pct(volP.variacion_pct), `${volP.presidente} · ${volP.anios_gestion}`) +
+    kpi('Último gobierno', `${fmt(last.dolar_min_cop)} – ${fmt(last.dolar_max_cop)}`, `${last.presidente} · ${last.anios_gestion}`);
+
+  $('tbody').innerHTML = p.map(r => `<tr class="border-t" style="border-color:var(--border)">
+    <td class="py-3 pr-4 font-medium">${r.presidente}</td><td class="py-3 pr-4 t2">${r.anios_gestion}</td>
+    <td class="py-3 pr-4 text-right tabular-nums">${fmt(r.dolar_min_cop)}</td>
+    <td class="py-3 pr-4 text-right tabular-nums">${fmt(r.dolar_max_cop)}</td>
+    <td class="py-3 text-right tabular-nums">${pct(r.variacion_pct)}</td></tr>`).join('');
+  $('fuente').textContent = 'Fuente de datos: ' + data.fuente;
+  $('updated').textContent = 'Actualizado ' + new Date().toLocaleString('es-CO');
+  renderCharts(p);
+}
+
+function renderCharts(p) {
+  charts.forEach(c => c.destroy());
+  const labels = p.map(r => [short(r.presidente), r.anios_gestion]);
+  const base = {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false },
+      tooltip: { backgroundColor: css('--card'), titleColor: css('--text-1'), bodyColor: css('--text-2'),
+        borderColor: css('--border'), borderWidth: 1, padding: 10, displayColors: false } },
+    scales: {
+      x: { grid: { display: false }, ticks: { color: css('--text-2'), font: { size: 11 } }, border: { color: css('--border') } },
+      y: { grid: { color: css('--grid') }, ticks: { color: css('--text-3'), font: { size: 11 } }, border: { display: false } }
+    }
+  };
+  charts.push(new Chart($('rangeChart'), {
+    type: 'bar',
+    data: { labels, datasets: [{ data: p.map(r => [r.dolar_min_cop, r.dolar_max_cop]),
+      backgroundColor: css('--series-1'), hoverBackgroundColor: css('--series-1-soft'),
+      borderRadius: 4, borderSkipped: false, barPercentage: 0.55 }] },
+    options: { ...base, plugins: { ...base.plugins, tooltip: { ...base.plugins.tooltip,
+      callbacks: { title: (i) => p[i[0].dataIndex].presidente,
+        label: (i) => [`Máximo: ${fmt(p[i.dataIndex].dolar_max_cop)}`, `Mínimo: ${fmt(p[i.dataIndex].dolar_min_cop)}`] } } },
+      scales: { ...base.scales, y: { ...base.scales.y, min: 0, ticks: { ...base.scales.y.ticks, callback: (v) => '$' + v.toLocaleString('es-CO') } } } }
+  }));
+  charts.push(new Chart($('varChart'), {
+    type: 'bar',
+    data: { labels: p.map(r => short(r.presidente)), datasets: [{ data: p.map(r => r.variacion_pct),
+      backgroundColor: css('--series-1'), hoverBackgroundColor: css('--series-1-soft'),
+      borderRadius: 4, barPercentage: 0.6 }] },
+    options: { ...base, indexAxis: 'y',
+      plugins: { ...base.plugins, tooltip: { ...base.plugins.tooltip,
+        callbacks: { title: (i) => p[i[0].dataIndex].presidente, label: (i) => `Variación: ${pct(i.raw)}` } } },
+      scales: { x: { ...base.scales.y, min: 0, ticks: { ...base.scales.y.ticks, callback: (v) => v + '%' } },
+                y: { ...base.scales.x } } }
+  }));
+}
+
+load();
+</script>
+</body>
+</html>
